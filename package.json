@@ -4,18 +4,23 @@
   "main": "index.js",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build && afplay /System/Library/Sounds/Hero.aiff",
+    "build:silent": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "lint:fix": "next lint --fix",
-    "format": "prettier --write .",
+    "lint": "next lint && afplay /System/Library/Sounds/Glass.aiff",
+    "lint:fix": "next lint --fix && afplay /System/Library/Sounds/Glass.aiff",
+    "format": "prettier --write . && afplay /System/Library/Sounds/Ping.aiff",
     "format:check": "prettier --check .",
-    "type-check": "tsc --noEmit",
-    "prepare": "husky"
+    "type-check": "tsc --noEmit && afplay /System/Library/Sounds/Glass.aiff",
+    "test:all": "npm run type-check && npm run lint && npm run build:silent && afplay /System/Library/Sounds/Hero.aiff",
+    "prepare": "husky",
+    "notify:success": "afplay /System/Library/Sounds/Hero.aiff",
+    "notify:complete": "afplay /System/Library/Sounds/Glass.aiff",
+    "notify:error": "afplay /System/Library/Sounds/Sosumi.aiff"
   },
   "lint-staged": {
     "*.{js,jsx,ts,tsx}": [
-      "eslint --fix",
+      "next lint --fix --file",
       "prettier --write"
     ],
     "*.{json,md,css,scss}": [
@@ -25,7 +30,7 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "Tattoo Journey - タトゥーアーティスト検索・予約プラットフォーム",
   "dependencies": {
     "next": "^15.5.0",
     "react": "^19.1.1",
