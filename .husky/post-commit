@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🎉 Commit successful!"
+echo "📁 Repository: $(basename $(git rev-parse --show-toplevel))"
+echo "📝 Latest commit: $(git log -1 --pretty=format:'%s')"
+echo "🔍 Files changed: $(git diff --name-only HEAD~1 HEAD | wc -l | xargs)"
+
+afplay /System/Library/Sounds/Hero.aiff &

@@ -14,6 +14,13 @@
     "type-check": "tsc --noEmit && afplay /System/Library/Sounds/Glass.aiff",
     "test:all": "npm run type-check && npm run lint && npm run build:silent && afplay /System/Library/Sounds/Hero.aiff",
     "prepare": "husky",
+    "setup": "./scripts/setup.sh",
+    "dev:web": "./scripts/dev.sh web",
+    "dev:mobile:ios": "./scripts/dev.sh mobile:ios",
+    "dev:mobile:android": "./scripts/dev.sh mobile:android",
+    "clean": "./scripts/dev.sh clean",
+    "install:all": "./scripts/dev.sh install:all",
+    "status": "./scripts/dev.sh status",
     "notify:success": "afplay /System/Library/Sounds/Hero.aiff",
     "notify:complete": "afplay /System/Library/Sounds/Glass.aiff",
     "notify:error": "afplay /System/Library/Sounds/Sosumi.aiff"
@@ -32,6 +39,7 @@
   "license": "ISC",
   "description": "Tattoo Journey - タトゥーアーティスト検索・予約プラットフォーム",
   "dependencies": {
+    "firebase": "^12.1.0",
     "next": "^15.5.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"

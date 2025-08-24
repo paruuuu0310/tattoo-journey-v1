@@ -4,5 +4,5 @@
     "prefer-const": "error",
     "no-var": "error"
   },
-  "ignorePatterns": ["node_modules/", ".next/", "out/"]
+  "ignorePatterns": ["node_modules/", ".next/", "out/", "mobile/"]
 }

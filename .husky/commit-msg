@@ -1,4 +1,13 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
-npx --no-install commitlint --edit "$1"
+echo "📝 Checking commit message format..."
+if npx --no-install commitlint --edit "$1"; then
+  echo "✅ Commit message format is valid!"
+  afplay /System/Library/Sounds/Ping.aiff &
+else
+  echo "❌ Invalid commit message format!"
+  echo "Please use conventional commit format: feat/fix/docs/style/refactor/test/chore: description"
+  afplay /System/Library/Sounds/Sosumi.aiff &
+  exit 1
+fi

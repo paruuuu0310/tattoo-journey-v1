@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "531196519917",
+    "firebase_url": "https://tattoo-journey-v2-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "tattoo-journey-v2",
+    "storage_bucket": "tattoo-journey-v2.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:531196519917:android:dc3e73be36608a259b73e4",
+        "android_client_info": {
+          "package_name": "com.tattoojourney.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDE5FFYI8zEcJuLqkq1uiqOCRreAkZK5uk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

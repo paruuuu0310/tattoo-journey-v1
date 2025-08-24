@@ -1,5 +1,31 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
-npm run build
-npm run lint
+echo "🚀 Running pre-push checks..."
+
+# TypeScript check
+echo "📝 Checking TypeScript..."
+if ! npm run type-check; then
+  echo "❌ TypeScript check failed!"
+  afplay /System/Library/Sounds/Sosumi.aiff &
+  exit 1
+fi
+
+# Linting check
+echo "🔍 Running linter..."
+if ! npm run lint; then
+  echo "❌ Linting failed!"
+  afplay /System/Library/Sounds/Sosumi.aiff &
+  exit 1
+fi
+
+# Build check
+echo "🏗️ Building project..."
+if ! npm run build:silent; then
+  echo "❌ Build failed!"
+  afplay /System/Library/Sounds/Sosumi.aiff &
+  exit 1
+fi
+
+echo "✅ All pre-push checks passed!"
+afplay /System/Library/Sounds/Hero.aiff &

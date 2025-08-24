@@ -1,4 +1,12 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
-npx lint-staged
+echo "🔍 Running pre-commit checks..."
+if npx lint-staged; then
+  echo "✅ Pre-commit checks passed!"
+  afplay /System/Library/Sounds/Glass.aiff &
+else
+  echo "❌ Pre-commit checks failed!"
+  afplay /System/Library/Sounds/Sosumi.aiff &
+  exit 1
+fi
