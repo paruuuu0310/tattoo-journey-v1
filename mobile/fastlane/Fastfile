@@ -1,0 +1,196 @@
+# Fastfile for Tattoo Journey Mobile App
+
+default_platform(:ios)
+
+# Environment variables
+APP_IDENTIFIER = ENV["APP_IDENTIFIER"] || "com.karamon.tattoojourney"
+GOOGLE_SERVICES_FILE = ENV["GOOGLE_SERVICES_FILE"]
+BUILD_NUMBER = ENV["BUILD_NUMBER"] || "1"
+
+platform :ios do
+  desc "Deploy a new version to TestFlight"
+  lane :beta do
+    setup_ci if ENV['CI']
+    
+    # Sync certificates and provisioning profiles
+    sync_code_signing(
+      type: "appstore",
+      readonly: is_ci,
+      app_identifier: APP_IDENTIFIER
+    )
+    
+    # Increment build number
+    increment_build_number(
+      xcodeproj: "./ios/TattooJourneyMobile.xcodeproj",
+      build_number: BUILD_NUMBER
+    )
+    
+    # Install CocoaPods dependencies
+    cocoapods(podfile: "./ios/Podfile")
+    
+    # Build the app
+    build_app(
+      scheme: "TattooJourneyMobile",
+      workspace: "./ios/TattooJourneyMobile.xcworkspace",
+      export_method: "app-store",
+      configuration: "Release",
+      clean: true,
+      output_directory: "./build",
+      output_name: "TattooJourneyMobile.ipa"
+    )
+    
+    # Upload to TestFlight
+    upload_to_testflight(
+      beta_app_feedback_email: "support@karamon.co.jp",
+      beta_app_description: "Tattoo Journey - AI-Powered Tattoo Artist Matching Platform",
+      demo_account_required: false,
+      distribute_external: true,
+      groups: ["Internal Testing"],
+      notify_external_testers: true
+    )
+    
+    # Post to Slack (if configured)
+    if ENV["SLACK_URL"]
+      slack(
+        message: "✅ iOS Beta build deployed successfully!",
+        channel: "#dev-mobile",
+        success: true
+      )
+    end
+  end
+
+  desc "Deploy to App Store"
+  lane :release do
+    setup_ci if ENV['CI']
+    
+    # Sync certificates
+    sync_code_signing(
+      type: "appstore",
+      readonly: is_ci,
+      app_identifier: APP_IDENTIFIER
+    )
+    
+    # Build the app
+    build_app(
+      scheme: "TattooJourneyMobile",
+      workspace: "./ios/TattooJourneyMobile.xcworkspace",
+      export_method: "app-store",
+      configuration: "Release",
+      clean: true
+    )
+    
+    # Upload to App Store
+    upload_to_app_store(
+      submit_for_review: false,
+      automatic_release: false,
+      force: true
+    )
+  end
+end
+
+platform :android do
+  desc "Deploy a new version to Google Play Console (Internal Testing)"
+  lane :beta do
+    # Set up Google Services file
+    if GOOGLE_SERVICES_FILE && File.exist?(GOOGLE_SERVICES_FILE)
+      sh "cp #{GOOGLE_SERVICES_FILE} ../android/app/google-services.json"
+    end
+    
+    # Clean and build
+    gradle(
+      task: "clean",
+      project_dir: "android/"
+    )
+    
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "android/",
+      properties: {
+        "android.injected.signing.store.file" => ENV["ANDROID_KEYSTORE_FILE"],
+        "android.injected.signing.store.password" => ENV["ANDROID_KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["ANDROID_KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["ANDROID_KEY_PASSWORD"]
+      }
+    )
+    
+    # Upload to Google Play Console
+    upload_to_play_store(
+      package_name: APP_IDENTIFIER,
+      aab: "./android/app/build/outputs/bundle/release/app-release.aab",
+      track: "internal",
+      json_key: ENV["GOOGLE_PLAY_JSON_KEY_FILE"],
+      skip_upload_apk: true,
+      skip_upload_metadata: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+    
+    # Post to Slack (if configured)
+    if ENV["SLACK_URL"]
+      slack(
+        message: "✅ Android Beta build deployed successfully!",
+        channel: "#dev-mobile",
+        success: true
+      )
+    end
+  end
+
+  desc "Deploy to Google Play Store"
+  lane :release do
+    # Build release AAB
+    gradle(
+      task: "bundle",
+      build_type: "Release",
+      project_dir: "android/",
+      properties: {
+        "android.injected.signing.store.file" => ENV["ANDROID_KEYSTORE_FILE"],
+        "android.injected.signing.store.password" => ENV["ANDROID_KEYSTORE_PASSWORD"],
+        "android.injected.signing.key.alias" => ENV["ANDROID_KEY_ALIAS"],
+        "android.injected.signing.key.password" => ENV["ANDROID_KEY_PASSWORD"]
+      }
+    )
+    
+    # Upload to Production
+    upload_to_play_store(
+      package_name: APP_IDENTIFIER,
+      aab: "./android/app/build/outputs/bundle/release/app-release.aab",
+      track: "production",
+      json_key: ENV["GOOGLE_PLAY_JSON_KEY_FILE"],
+      skip_upload_apk: true
+    )
+  end
+end
+
+# Cross-platform lanes
+desc "Run tests"
+lane :test do
+  sh "cd .. && npm run test"
+end
+
+desc "Run linting"
+lane :lint do
+  sh "cd .. && npm run lint"
+end
+
+desc "Type check"
+lane :type_check do
+  sh "cd .. && npm run type-check"
+end
+
+desc "Build for both platforms"
+lane :build_all do
+  ios_beta
+  android_beta
+end
+
+# Error handling
+error do |lane, exception|
+  if ENV["SLACK_URL"]
+    slack(
+      message: "❌ Build failed in lane: #{lane}\\nError: #{exception.message}",
+      channel: "#dev-mobile",
+      success: false
+    )
+  end
+end

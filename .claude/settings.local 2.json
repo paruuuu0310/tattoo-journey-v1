@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(npx create-next-app:*)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss init:*)",
+      "Bash(mkdir:*)",
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh repo create:*)",
+      "Bash(brew install:*)",
+      "Bash(gh auth:*)",
+      "Bash(npx husky init:*)",
+      "Bash(npm run lint)",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(osascript:*)",
+      "Bash(gem install:*)",
+      "Bash(sudo gem install:*)",
+      "Bash(sudo gem install:*)",
+      "Bash(find:*)"
+    ],
+    "deny": []
+  }
+}

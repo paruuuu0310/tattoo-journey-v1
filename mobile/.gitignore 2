@@ -1,0 +1,88 @@
+# Tattoo Journey 2.0 Mobile App - Git Ignore File
+
+# React Native & Metro
+node_modules/
+.expo/
+web-build/
+dist/
+
+# Environment files
+.env.local
+.env.production
+.env
+
+# iOS specific
+ios/build/
+ios/Pods/
+ios/*.xcworkspace
+ios/*.xcuserdata
+ios/DerivedData/
+
+# Android specific
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/release/
+android/app/debug/
+
+# Build artifacts
+*.apk
+*.ipa
+*.aab
+
+# Debugging
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Firebase
+google-services.json
+GoogleService-Info.plist
+
+# Temporary files
+*.log
+*.tmp
+*.temp
+
+# Coverage
+coverage/
+
+# Bundle analysis
+bundle-analyzer-report.html
+
+# CocoaPods
+Podfile.lock
+
+# React Native CLI
+.react-native-cli.json
+
+# Flipper
+flipper-rn-addons.json
+
+# Watchman
+.watchmanconfig
+
+# Prevent duplicate directory creation
+*\ 2/
+app\ 2/
+TattooJourneyMobile\ 2/
+
+# TypeScript build cache
+tsconfig.tsbuildinfo

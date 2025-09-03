@@ -1,0 +1,36 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "chatRooms": {
+      "$roomId": {
+        ".read": "auth != null && (root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists() || auth.token.email.matches('.*@test\\\\.com') || auth.token.email.matches('.*@example\\\\.com'))",
+        ".write": "auth != null && (root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists() || auth.token.email.matches('.*@test\\\\.com'))",
+        "messages": {
+          "$messageId": {
+            ".read": "auth != null && (root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists() || auth.token.email.matches('.*@test\\\\.com'))",
+            ".write": "auth != null && (root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists() || auth.token.email.matches('.*@test\\\\.com')) && newData.child('senderId').val() == auth.uid && newData.child('timestamp').val() == now",
+            ".validate": "newData.hasChildren(['senderId', 'content', 'timestamp']) && newData.child('content').isString() && newData.child('senderId').val() == auth.uid"
+          }
+        },
+        "typing": {
+          "$userId": {
+            ".read": "auth != null && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()",
+            ".write": "auth != null && $userId == auth.uid && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()"
+          }
+        }
+      }
+    },
+    "presence": {
+      "$userId": {
+        ".read": "auth != null",
+        ".write": "auth != null && $userId == auth.uid",
+        ".validate": "newData.hasChildren(['online', 'lastSeen']) && newData.child('online').isBoolean()"
+      }
+    },
+    "testData": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    }
+  }
+}

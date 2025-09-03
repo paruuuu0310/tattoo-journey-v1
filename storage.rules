@@ -1,0 +1,84 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for Tattoo Journey 2.0
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper functions for authentication and authorization
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isArtist() {
+      return isAuthenticated() && 
+             'userType' in request.auth.token && 
+             request.auth.token.userType == 'artist';
+    }
+    
+    function isCustomer() {
+      return isAuthenticated() && 
+             'userType' in request.auth.token && 
+             request.auth.token.userType == 'customer';
+    }
+    
+    function isValidImageType() {
+      return resource.contentType.matches('image/(jpeg|png|webp)');
+    }
+    
+    function isValidImageSize() {
+      return resource.size <= 10 * 1024 * 1024; // 10MB limit
+    }
+    
+    function isValidProfileImageSize() {
+      return resource.size <= 1 * 1024 * 1024; // 1MB limit
+    }
+    
+    function isValidImageFormat() {
+      return resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+    }
+    
+    // Profile Images
+    match /users/{userId}/profile/{imageId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && 
+                      isValidImageFormat() && 
+                      isValidProfileImageSize();
+      allow delete: if isOwner(userId);
+    }
+    
+    // Portfolio Images (Artist only)
+    match /users/{userId}/portfolio/{imageId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && 
+                      isArtist() && 
+                      isValidImageFormat() && 
+                      isValidImageSize();
+      allow delete: if isOwner(userId) && isArtist();
+    }
+    
+    // Chat Images
+    match /chats/{chatId}/{imageId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && 
+                      isValidImageFormat() && 
+                      isValidImageSize();
+      allow delete: if isOwner(resource.metadata.uploadedBy);
+    }
+    
+    // Temporary upload images
+    match /temp/{userId}/{imageId} {
+      allow read, write, delete: if isOwner(userId) && 
+                                    isValidImageFormat() && 
+                                    isValidImageSize();
+    }
+    
+    // All other files denied
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

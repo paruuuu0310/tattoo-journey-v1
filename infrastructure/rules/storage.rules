@@ -1,0 +1,276 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for Tattoo Journey 2.0
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper functions for authentication and authorization
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isArtist() {
+      return isAuthenticated() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.userType == 'artist';
+    }
+    
+    function isCustomer() {
+      return isAuthenticated() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.userType == 'customer';
+    }
+    
+    function isValidImageType() {
+      return resource.contentType.matches('image/.*');
+    }
+    
+    function isValidImageSize() {
+      return resource.size <= 10 * 1024 * 1024; // 10MB limit
+    }
+    
+    function isValidProfileImageSize() {
+      return resource.size <= 1 * 1024 * 1024; // ✅ 1MB制限に厳格化
+    }
+    
+    function isValidImageFormat() {
+      return resource.contentType in ['image/jpeg', 'image/png', 'image/webp']; // ✅ 許可されたフォーマットのみ
+    }
+    
+    // ✅ SEC-008: 強化された管理者権限検証
+    function isVerifiedAdmin() {
+      return request.auth != null && 
+             request.auth.token.admin == true && 
+             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.keys().hasAll(['verifiedAdmin', 'adminLevel']) &&
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.verifiedAdmin == true;
+    }
+    
+    function isSuperAdmin() {
+      return isVerifiedAdmin() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.adminLevel == 'super';
+    }
+    
+    function isModerator() {
+      return isVerifiedAdmin() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.adminLevel in ['moderate', 'super'];
+    }
+    
+    // ✅ 時間制限チェック（24時間以内の画像のみ削除可能）
+    function isWithinDeletionTimeLimit() {
+      return resource.timeCreated != null && 
+             resource.timeCreated > timestamp.date(timestamp.value(request.time) - duration.value(24 * 60 * 60 * 1000));
+    }
+    
+    // ✅ チャットルーム状態チェック
+    function isChatRoomActive(roomId) {
+      let roomData = firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data;
+      return roomData.keys().hasAll(['status']) ? roomData.status == 'active' : true;
+    }
+    
+    // ✅ 予約関連画像の保護チェック
+    function isBookingRelatedImage(roomId) {
+      return firestore.exists(/databases/(default)/documents/activeBookings/$(roomId + '_booking')) ||
+             firestore.exists(/databases/(default)/documents/confirmedBookings/$(roomId + '_booking'));
+    }
+    
+    function isPortfolioAccessAuthorized(artistId) {
+      return isOwner(artistId) || // アーティスト本人
+             (isCustomer() && hasArtistViewPermission(artistId)); // 認可された顧客
+    }
+    
+    function hasArtistViewPermission(artistId) {
+      return firestore.exists(/databases/(default)/documents/matchingHistory/$(request.auth.uid + '_' + artistId)) ||
+             firestore.exists(/databases/(default)/documents/inquiries/$(request.auth.uid + '_' + artistId)) ||
+             firestore.exists(/databases/(default)/documents/confirmedBookings/$(request.auth.uid + '_' + artistId));
+    }
+    
+    // User profile images
+    match /users/{userId}/profile/{imageId} {
+      // Users can read their own profile images + artists' profile images
+      allow read: if isAuthenticated() && 
+                     (isOwner(userId) || 
+                      firestore.get(/databases/(default)/documents/users/$(userId)).data.userType == 'artist');
+      
+      // Users can only upload their own profile images - ✅ フォーマット検証強化
+      allow create, update: if isOwner(userId) && 
+                               isValidImageFormat() && 
+                               isValidProfileImageSize();
+      
+      // Users can delete their own profile images
+      allow delete: if isOwner(userId);
+    }
+    
+    // Artist portfolio images - ✅ アクセス制御を厳格化
+    match /artists/{artistId}/portfolio/{imageId} {
+      // ✅ 必要最小限のユーザーのみアクセス可能
+      allow read: if isAuthenticated() && isPortfolioAccessAuthorized(artistId);
+      
+      // Only the artist owner can upload portfolio images - ✅ フォーマット検証強化
+      allow create, update: if isArtist() && 
+                               isOwner(artistId) && 
+                               isValidImageFormat() && 
+                               isValidImageSize();
+      
+      // Only the artist owner can delete portfolio images
+      allow delete: if isArtist() && isOwner(artistId);
+    }
+    
+    // Customer uploaded images for AI analysis
+    match /customers/{customerId}/uploads/{imageId} {
+      // Only the customer owner can read their uploaded images
+      allow read: if isCustomer() && isOwner(customerId);
+      
+      // Only the customer can upload images for analysis
+      allow create, update: if isCustomer() && 
+                               isOwner(customerId) && 
+                               isValidImageType() && 
+                               isValidImageSize();
+      
+      // Customers can delete their uploaded images
+      allow delete: if isCustomer() && isOwner(customerId);
+    }
+    
+    // Chat message images - ✅ SEC-008: 削除権限を大幅強化
+    match /chat/{roomId}/images/{imageId} {
+      // Only chat room participants can read chat images
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants);
+      
+      // Only chat room participants can upload images - ✅ フォーマット検証強化
+      allow create, update: if isAuthenticated() && 
+                               (request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants) &&
+                               isValidImageFormat() && 
+                               isValidImageSize();
+      
+      // ✅ SEC-008: 大幅強化された削除権限システム
+      allow delete: if isAuthenticated() && (
+        // 1. 自己削除権限（条件付き）
+        (resource.metadata.uploadedBy == request.auth.uid && 
+         request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants &&
+         isWithinDeletionTimeLimit() && // 24時間制限
+         isChatRoomActive(roomId) && // アクティブなチャット
+         !isBookingRelatedImage(roomId)) || // 予約関連でない
+        
+        // 2. モデレーター権限（制限付き）
+        (isModerator() && 
+         !isBookingRelatedImage(roomId) &&
+         isChatRoomActive(roomId)) ||
+        
+        // 3. スーパー管理者権限（全権限）
+        isSuperAdmin()
+      );
+    }
+    
+    // Tattoo design reference images
+    match /designs/reference/{imageId} {
+      // Anyone can read reference images (public design inspiration)
+      allow read: if isAuthenticated();
+      
+      // Only artists can upload reference images
+      allow create, update: if isArtist() && 
+                               isValidImageType() && 
+                               isValidImageSize();
+      
+      // Only the uploader can delete reference images
+      allow delete: if isArtist() && 
+                       resource.metadata.uploadedBy == request.auth.uid;
+    }
+    
+    // AI-generated design images
+    match /ai-designs/{customerId}/{designId} {
+      // Only the customer owner can read their AI-generated designs
+      allow read: if isCustomer() && isOwner(customerId);
+      
+      // System can create AI-generated images (through Cloud Functions)
+      allow create: if isCustomer() && 
+                       isOwner(customerId) && 
+                       isValidImageType();
+      
+      // No manual updates allowed for AI-generated images
+      allow update: if false;
+      
+      // Customers can delete their AI-generated designs
+      allow delete: if isCustomer() && isOwner(customerId);
+    }
+    
+    // Booking-related images (before/after photos, design sketches)
+    match /bookings/{bookingId}/images/{imageId} {
+      // Only booking participants can read booking images
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.customerId ||
+                      request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.artistId);
+      
+      // Only booking participants can upload images
+      allow create, update: if isAuthenticated() && 
+                               (request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.customerId ||
+                                request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.artistId) &&
+                               isValidImageType() && 
+                               isValidImageSize();
+      
+      // Only the uploader can delete booking images
+      allow delete: if isAuthenticated() && 
+                       resource.metadata.uploadedBy == request.auth.uid;
+    }
+    
+    // Review images (customer can upload photos of completed tattoos)
+    match /reviews/{reviewId}/images/{imageId} {
+      // Anyone can read review images (public visibility for transparency)
+      allow read: if isAuthenticated();
+      
+      // Only the review author (customer) can upload review images
+      allow create, update: if isAuthenticated() && 
+                               isCustomer() && 
+                               request.auth.uid == firestore.get(/databases/(default)/documents/reviews/$(reviewId)).data.customerId &&
+                               isValidImageType() && 
+                               isValidImageSize();
+      
+      // Only the review author can delete review images
+      allow delete: if isAuthenticated() && 
+                       isCustomer() && 
+                       request.auth.uid == firestore.get(/databases/(default)/documents/reviews/$(reviewId)).data.customerId;
+    }
+    
+    // System backup and admin files
+    match /system/{fileName} {
+      // Only admin users can access system files
+      allow read, write: if isAuthenticated() && 
+                            request.auth.token.admin == true;
+    }
+    
+    // Temporary files (for processing, will be cleaned up)
+    match /temp/{userId}/{fileName} {
+      // Users can only access their own temporary files
+      allow read, write: if isOwner(userId);
+      
+      // Auto-cleanup after 24 hours (handled by Cloud Functions)
+    }
+    
+    // App assets and public files
+    match /assets/{fileName} {
+      // Anyone can read public assets
+      allow read: if true;
+      
+      // Only admin can upload/update assets
+      allow write: if isAuthenticated() && 
+                      request.auth.token.admin == true;
+    }
+    
+    // Analytics and logging images (screenshots, crash reports with images)
+    match /analytics/{userId}/logs/{fileName} {
+      // Users can only read their own analytics data
+      allow read: if isOwner(userId);
+      
+      // System can write analytics data
+      allow write: if isOwner(userId) && 
+                      isValidImageSize();
+    }
+    
+    // Default deny rule - no access to any other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

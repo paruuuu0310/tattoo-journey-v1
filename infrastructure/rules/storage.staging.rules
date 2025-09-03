@@ -1,0 +1,81 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for Staging Environment
+// 🔒 This ruleset mimics production but allows test users
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isTestUser() {
+      return isAuthenticated() && 
+             request.auth.token.email != null &&
+             (request.auth.token.email.matches('.*@staging-test\\.com') ||
+              request.auth.token.email.matches('.*@tattoo-journey-staging\\.com'));
+    }
+    
+    function isValidImageType() {
+      return resource.contentType.matches('image/.*');
+    }
+    
+    function isValidImageSize() {
+      return resource.size <= 10 * 1024 * 1024; // 10MB limit
+    }
+    
+    function isValidImageFormat() {
+      return resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+    }
+    
+    // User profile images - production-like with test exceptions
+    match /users/{userId}/profile/{imageId} {
+      allow read: if isAuthenticated() && (isOwner(userId) || isTestUser());
+      allow create, update: if isOwner(userId) && 
+                               isValidImageFormat() && 
+                               isValidImageSize();
+      allow delete: if isOwner(userId) || isTestUser();
+    }
+    
+    // Artist portfolio images - production-like
+    match /artists/{artistId}/portfolio/{imageId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isOwner(artistId) && 
+                               isValidImageFormat() && 
+                               isValidImageSize();
+      allow delete: if isOwner(artistId) || isTestUser();
+    }
+    
+    // Chat message images - production-like with test cleanup
+    match /chat/{roomId}/images/{imageId} {
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants);
+      
+      allow create, update: if isAuthenticated() && 
+                               (request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants) &&
+                               isValidImageFormat() && 
+                               isValidImageSize();
+      
+      allow delete: if isAuthenticated() && (
+        (resource.metadata.uploadedBy == request.auth.uid && 
+         request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants) ||
+        isTestUser()
+      );
+    }
+    
+    // Test data for staging
+    match /stagingTestData/{allPaths=**} {
+      allow read, write: if isTestUser();
+    }
+    
+    // Default deny - strict like production
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

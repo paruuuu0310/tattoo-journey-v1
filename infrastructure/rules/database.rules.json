@@ -1,0 +1,250 @@
+{
+  "rules": {
+    // Chat messages rules
+    "messages": {
+      "$roomId": {
+        // Only authenticated users who are participants in the chat room can read messages
+        ".read": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+
+        // Only authenticated participants can write messages
+        ".write": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+
+        "$messageId": {
+          // Validate message structure
+          ".validate": "newData.hasChildren(['senderId', 'message', 'timestamp', 'type']) && newData.child('senderId').val() == auth.uid && newData.child('timestamp').val() <= now",
+
+          "senderId": {
+            ".validate": "newData.val() == auth.uid"
+          },
+
+          "message": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 10000"
+          },
+
+          "timestamp": {
+            ".validate": "newData.val() <= now && newData.val() > (now - 86400000)"
+          },
+
+          "type": {
+            ".validate": "newData.val().matches(/^(text|image|booking_request|system)$/)"
+          },
+
+          "metadata": {
+            ".validate": "newData.exists()"
+          },
+
+          "edited": {
+            ".validate": "newData.val() == true"
+          },
+
+          "editedAt": {
+            ".validate": "newData.val() <= now && newData.val() > root.child('messages/' + $roomId + '/' + $messageId + '/timestamp').val()"
+          }
+        }
+      }
+    },
+
+    // Chat room participants and metadata
+    "chatRooms": {
+      "$roomId": {
+        // Participants can read chat room info
+        ".read": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+
+        // Participants can update chat room metadata
+        ".write": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+
+        "participants": {
+          "$userId": {
+            ".validate": "newData.val() == true"
+          }
+        },
+
+        "type": {
+          ".validate": "newData.val().matches(/^(direct|booking|group)$/)"
+        },
+
+        "createdAt": {
+          ".validate": "newData.val() <= now"
+        },
+
+        "lastMessage": {
+          "senderId": {
+            ".validate": "newData.isString()"
+          },
+          "message": {
+            ".validate": "newData.isString()"
+          },
+          "timestamp": {
+            ".validate": "newData.val() <= now"
+          },
+          "type": {
+            ".validate": "newData.val().matches(/^(text|image|booking_request|system)$/)"
+          }
+        },
+
+        "unreadCount": {
+          "$userId": {
+            ".validate": "newData.isNumber() && newData.val() >= 0"
+          }
+        }
+      }
+    },
+
+    // Typing indicators
+    "typing": {
+      "$roomId": {
+        // Only participants can read/write typing indicators
+        ".read": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+        ".write": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+
+        "$userId": {
+          ".validate": "newData.val() == true || newData.val() == null",
+          // Auto-expire typing indicators after 10 seconds
+          ".write": "$userId == auth.uid"
+        }
+      }
+    },
+
+    // User presence (online/offline status)
+    "presence": {
+      "$userId": {
+        // Users can read anyone's presence, but only write their own
+        ".read": "auth != null",
+        ".write": "$userId == auth.uid",
+
+        "status": {
+          ".validate": "newData.val().matches(/^(online|offline|away)$/)"
+        },
+
+        "lastSeen": {
+          ".validate": "newData.val() <= now"
+        },
+
+        "isTyping": {
+          ".validate": "newData.isBoolean()"
+        }
+      }
+    },
+
+    // Message read receipts
+    "readReceipts": {
+      "$roomId": {
+        // Only participants can read/write read receipts
+        ".read": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+        ".write": "auth != null && (root.child('chatRooms/' + $roomId + '/participants/' + auth.uid).exists() || root.child('chatRooms/' + $roomId + '/participants').hasChild(auth.uid))",
+
+        "$userId": {
+          ".write": "$userId == auth.uid",
+
+          "lastReadTimestamp": {
+            ".validate": "newData.val() <= now"
+          },
+
+          "lastReadMessageId": {
+            ".validate": "newData.isString()"
+          }
+        }
+      }
+    },
+
+    // Notification tokens for push notifications
+    "notificationTokens": {
+      "$userId": {
+        ".read": "$userId == auth.uid",
+        ".write": "$userId == auth.uid",
+
+        "$tokenId": {
+          "token": {
+            ".validate": "newData.isString() && newData.val().length > 0"
+          },
+          "platform": {
+            ".validate": "newData.val().matches(/^(ios|android)$/)"
+          },
+          "updatedAt": {
+            ".validate": "newData.val() <= now"
+          }
+        }
+      }
+    },
+
+    // System announcements
+    "announcements": {
+      // Everyone can read announcements
+      ".read": "auth != null",
+      // Only admins can write announcements (would need admin claims)
+      ".write": "auth != null && auth.token.admin == true",
+
+      "$announcementId": {
+        ".validate": "newData.hasChildren(['title', 'message', 'timestamp', 'type'])",
+
+        "title": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+        },
+
+        "message": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 1000"
+        },
+
+        "timestamp": {
+          ".validate": "newData.val() <= now"
+        },
+
+        "type": {
+          ".validate": "newData.val().matches(/^(info|warning|maintenance|feature)$/)"
+        },
+
+        "targetUsers": {
+          ".validate": "newData.val().matches(/^(all|artists|customers)$/)"
+        },
+
+        "expiresAt": {
+          ".validate": "newData.val() > now"
+        }
+      }
+    },
+
+    // App configuration (read-only for clients)
+    "appConfig": {
+      ".read": "auth != null",
+      ".write": "auth != null && auth.token.admin == true",
+
+      "version": {
+        "current": {
+          ".validate": "newData.isString()"
+        },
+        "minimum": {
+          ".validate": "newData.isString()"
+        }
+      },
+
+      "maintenance": {
+        "enabled": {
+          ".validate": "newData.isBoolean()"
+        },
+        "message": {
+          ".validate": "newData.isString()"
+        },
+        "scheduledAt": {
+          ".validate": "newData.val() > now"
+        }
+      },
+
+      "features": {
+        "$featureName": {
+          "enabled": {
+            ".validate": "newData.isBoolean()"
+          },
+          "rolloutPercentage": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+          }
+        }
+      }
+    },
+
+    // Default deny rule
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

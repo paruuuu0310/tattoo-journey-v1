@@ -1,0 +1,216 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for Production Environment
+// 🔒 This ruleset provides maximum security for production
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Production helper functions - strict validation
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isArtist() {
+      return isAuthenticated() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.userType == 'artist';
+    }
+    
+    function isCustomer() {
+      return isAuthenticated() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.userType == 'customer';
+    }
+    
+    function isValidImageType() {
+      return resource.contentType.matches('image/.*');
+    }
+    
+    function isValidImageSize() {
+      return resource.size <= 10 * 1024 * 1024; // 10MB limit
+    }
+    
+    function isValidProfileImageSize() {
+      return resource.size <= 1 * 1024 * 1024; // 1MB limit for profiles
+    }
+    
+    function isValidImageFormat() {
+      return resource.contentType in ['image/jpeg', 'image/png', 'image/webp'];
+    }
+    
+    // ✅ SEC-008: Enhanced admin verification
+    function isVerifiedAdmin() {
+      return request.auth != null && 
+             request.auth.token.admin == true && 
+             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.keys().hasAll(['verifiedAdmin', 'adminLevel']) &&
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.verifiedAdmin == true;
+    }
+    
+    function isSuperAdmin() {
+      return isVerifiedAdmin() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.adminLevel == 'super';
+    }
+    
+    function isModerator() {
+      return isVerifiedAdmin() && 
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.adminLevel in ['moderate', 'super'];
+    }
+    
+    // ✅ Time-based deletion restrictions
+    function isWithinDeletionTimeLimit() {
+      return resource.timeCreated != null && 
+             resource.timeCreated > timestamp.date(timestamp.value(request.time) - duration.value(24 * 60 * 60 * 1000));
+    }
+    
+    function isChatRoomActive(roomId) {
+      let roomData = firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data;
+      return roomData.keys().hasAll(['status']) ? roomData.status == 'active' : true;
+    }
+    
+    function isBookingRelatedImage(roomId) {
+      return firestore.exists(/databases/(default)/documents/activeBookings/$(roomId + '_booking')) ||
+             firestore.exists(/databases/(default)/documents/confirmedBookings/$(roomId + '_booking'));
+    }
+    
+    function isPortfolioAccessAuthorized(artistId) {
+      return isOwner(artistId) || 
+             (isCustomer() && hasArtistViewPermission(artistId));
+    }
+    
+    function hasArtistViewPermission(artistId) {
+      return firestore.exists(/databases/(default)/documents/matchingHistory/$(request.auth.uid + '_' + artistId)) ||
+             firestore.exists(/databases/(default)/documents/inquiries/$(request.auth.uid + '_' + artistId)) ||
+             firestore.exists(/databases/(default)/documents/confirmedBookings/$(request.auth.uid + '_' + artistId));
+    }
+    
+    // User profile images - strict production rules
+    match /users/{userId}/profile/{imageId} {
+      allow read: if isAuthenticated() && 
+                     (isOwner(userId) || 
+                      firestore.get(/databases/(default)/documents/users/$(userId)).data.userType == 'artist');
+      
+      allow create, update: if isOwner(userId) && 
+                               isValidImageFormat() && 
+                               isValidProfileImageSize();
+      
+      allow delete: if isOwner(userId);
+    }
+    
+    // Artist portfolio images - ✅ Enhanced access control
+    match /artists/{artistId}/portfolio/{imageId} {
+      allow read: if isAuthenticated() && isPortfolioAccessAuthorized(artistId);
+      
+      allow create, update: if isArtist() && 
+                               isOwner(artistId) && 
+                               isValidImageFormat() && 
+                               isValidImageSize();
+      
+      allow delete: if isArtist() && isOwner(artistId);
+    }
+    
+    // Customer uploaded images
+    match /customers/{customerId}/uploads/{imageId} {
+      allow read: if isCustomer() && isOwner(customerId);
+      
+      allow create, update: if isCustomer() && 
+                               isOwner(customerId) && 
+                               isValidImageType() && 
+                               isValidImageSize();
+      
+      allow delete: if isCustomer() && isOwner(customerId);
+    }
+    
+    // Chat message images - ✅ SEC-008: Enhanced deletion permissions
+    match /chat/{roomId}/images/{imageId} {
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants);
+      
+      allow create, update: if isAuthenticated() && 
+                               (request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants) &&
+                               isValidImageFormat() && 
+                               isValidImageSize();
+      
+      // ✅ SEC-008: Greatly enhanced deletion permission system
+      allow delete: if isAuthenticated() && (
+        // 1. Self-deletion rights (conditional)
+        (resource.metadata.uploadedBy == request.auth.uid && 
+         request.auth.uid in firestore.get(/databases/(default)/documents/chatRooms/$(roomId)).data.participants &&
+         isWithinDeletionTimeLimit() && 
+         isChatRoomActive(roomId) && 
+         !isBookingRelatedImage(roomId)) ||
+        
+        // 2. Moderator rights (limited)
+        (isModerator() && 
+         !isBookingRelatedImage(roomId) &&
+         isChatRoomActive(roomId)) ||
+        
+        // 3. Super admin rights (full authority)
+        isSuperAdmin()
+      );
+    }
+    
+    // Booking images - strict participant access
+    match /bookings/{bookingId}/images/{imageId} {
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.customerId ||
+                      request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.artistId);
+      
+      allow create, update: if isAuthenticated() && 
+                               (request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.customerId ||
+                                request.auth.uid == firestore.get(/databases/(default)/documents/bookingRequests/$(bookingId)).data.artistId) &&
+                               isValidImageType() && 
+                               isValidImageSize();
+      
+      allow delete: if isAuthenticated() && 
+                       resource.metadata.uploadedBy == request.auth.uid;
+    }
+    
+    // Review images - public read, customer write
+    match /reviews/{reviewId}/images/{imageId} {
+      allow read: if isAuthenticated();
+      
+      allow create, update: if isAuthenticated() && 
+                               isCustomer() && 
+                               request.auth.uid == firestore.get(/databases/(default)/documents/reviews/$(reviewId)).data.customerId &&
+                               isValidImageType() && 
+                               isValidImageSize();
+      
+      allow delete: if isAuthenticated() && 
+                       isCustomer() && 
+                       request.auth.uid == firestore.get(/databases/(default)/documents/reviews/$(reviewId)).data.customerId;
+    }
+    
+    // System files - admin only
+    match /system/{fileName} {
+      allow read, write: if isAuthenticated() && 
+                            request.auth.token.admin == true;
+    }
+    
+    // User temporary files
+    match /temp/{userId}/{fileName} {
+      allow read, write: if isOwner(userId);
+    }
+    
+    // Public assets
+    match /assets/{fileName} {
+      allow read: if true;
+      allow write: if isAuthenticated() && 
+                      request.auth.token.admin == true;
+    }
+    
+    // Analytics logs
+    match /analytics/{userId}/logs/{fileName} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && 
+                      isValidImageSize();
+    }
+    
+    // Production strict default - no access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

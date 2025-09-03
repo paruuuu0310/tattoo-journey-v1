@@ -9,7 +9,7 @@ export interface User {
   profile: UserProfile;
 }
 
-export type UserType = 'customer' | 'artist' | 'owner';
+export type UserType = "customer" | "artist" | "owner";
 
 export interface UserProfile {
   firstName: string;
@@ -69,11 +69,27 @@ export interface PortfolioItem {
 }
 
 export interface AIAnalysis {
-  styles: StyleScore[];
-  colors: ColorAnalysis;
-  complexity: number; // 1-10
+  style: TattooStyle;
+  colorPalette: string[];
+  isColorful: boolean;
   motifs: string[];
-  confidence: number; // 0-1
+  complexity: "シンプル" | "中程度" | "複雑";
+  confidence: number;
+}
+
+export interface AIAnalysisResult extends AIAnalysis {
+  rawLabels: Array<{
+    description: string;
+    confidence: number;
+  }>;
+  processedAt: Date;
+}
+
+export interface ImageAnalysis {
+  dominantColors: string[];
+  isColorful: boolean;
+  detectedObjects: string[];
+  confidence: number;
 }
 
 export interface StyleScore {
@@ -87,19 +103,22 @@ export interface ColorAnalysis {
   colorPalette: string[];
 }
 
-export type TattooStyle = 
-  | 'realism'
-  | 'traditional'
-  | 'neo-traditional'
-  | 'japanese'
-  | 'blackwork'
-  | 'watercolor'
-  | 'geometric'
-  | 'minimalist'
-  | 'tribal'
-  | 'biomechanical';
+export type TattooStyle =
+  | "リアリズム"
+  | "トラディショナル"
+  | "ネオトラディショナル"
+  | "ジャパニーズ"
+  | "ブラック＆グレー"
+  | "カラー"
+  | "ジオメトリック"
+  | "ミニマル"
+  | "トライバル"
+  | "バイオメカニクス"
+  | "オールドスクール"
+  | "レタリング"
+  | "ポートレート";
 
-export type TattooSize = 'small' | 'medium' | 'large' | 'extra-large';
+export type TattooSize = "small" | "medium" | "large" | "extra-large";
 
 export interface ArtistRating {
   averageRating: number;
@@ -140,7 +159,19 @@ export interface MatchingResult {
 }
 
 export interface MatchReason {
-  factor: 'style' | 'rating' | 'price' | 'distance' | 'availability';
+  factor: "style" | "rating" | "price" | "distance" | "availability";
   score: number;
   explanation: string;
+}
+
+export interface Review {
+  id: string;
+  bookingId: string;
+  artistId: string;
+  customerId: string;
+  rating: number;
+  comment: string;
+  photos?: string[];
+  createdAt: Date;
+  updatedAt: Date;
 }

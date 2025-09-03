@@ -1,0 +1,148 @@
+rules_version = '2';
+
+// Staging environment - production-like with test data allowances
+// 🔒 This ruleset mimics production but allows test users for integration testing
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Import all production functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isArtist() {
+      return isAuthenticated() && 
+             resource.data.userType == 'artist';
+    }
+    
+    function isCustomer() {
+      return isAuthenticated() && 
+             resource.data.userType == 'customer';
+    }
+    
+    function isTestUser() {
+      return isAuthenticated() && 
+             request.auth.token.email != null &&
+             (request.auth.token.email.matches('.*@staging-test\\.com') ||
+              request.auth.token.email.matches('.*@tattoo-journey-staging\\.com'));
+    }
+    
+    function isVerifiedAdmin() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.verifiedAdmin == true &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminLevel in ['moderate', 'super'];
+    }
+    
+    function isSuperAdmin() {
+      return isVerifiedAdmin() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminLevel == 'super';
+    }
+    
+    // Users collection - production rules with test user exceptions
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (
+        isOwner(userId) || 
+        isTestUser() || // Test users can read all for integration tests
+        exists(/databases/$(database)/documents/users/$(userId)) &&
+        get(/databases/$(database)/documents/users/$(userId)).data.userType == 'artist'
+      );
+      
+      allow create: if isAuthenticated() && 
+                       isOwner(userId) && 
+                       validateUserCreation(request.resource.data);
+      
+      allow update: if isAuthenticated() && 
+                       isOwner(userId) && 
+                       validateUserUpdate(resource.data, request.resource.data);
+      
+      allow delete: if isTestUser(); // Only test users can delete for cleanup
+      
+      function validateUserCreation(data) {
+        return data.keys().hasAll(['email', 'userType', 'createdAt']) &&
+               data.userType in ['customer', 'artist'] &&
+               data.email == request.auth.token.email &&
+               data.createdAt is timestamp;
+      }
+      
+      function validateUserUpdate(currentData, newData) {
+        return newData.email == currentData.email &&
+               newData.userType == currentData.userType &&
+               newData.createdAt == currentData.createdAt;
+      }
+    }
+    
+    // Portfolio items - same as production
+    match /portfolioItems/{itemId} {
+      allow read: if isAuthenticated();
+      
+      allow create: if isAuthenticated() && 
+                       isArtist() && 
+                       isOwner(request.resource.data.artistId);
+      
+      allow update: if isAuthenticated() && 
+                       isOwner(resource.data.artistId);
+      
+      allow delete: if isAuthenticated() && 
+                       (isOwner(resource.data.artistId) || isTestUser());
+    }
+    
+    // Chat rooms - production rules with test cleanup
+    match /chatRooms/{roomId} {
+      allow read: if isAuthenticated() && 
+                     request.auth.uid in resource.data.participants;
+      
+      allow create: if isAuthenticated() && 
+                       request.auth.uid in request.resource.data.participants;
+      
+      allow update: if isAuthenticated() && 
+                       request.auth.uid in resource.data.participants;
+      
+      allow delete: if isTestUser(); // Test cleanup only
+    }
+    
+    // Messages - production rules
+    match /chatRooms/{roomId}/messages/{messageId} {
+      allow read: if isAuthenticated() && 
+                     request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants;
+      
+      allow create: if isAuthenticated() && 
+                       request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants &&
+                       isOwner(request.resource.data.senderId);
+      
+      allow update: if isAuthenticated() && 
+                       isOwner(resource.data.senderId);
+      
+      allow delete: if isTestUser();
+    }
+    
+    // Test data - staging environment specific
+    match /stagingTestData/{document=**} {
+      allow read, write: if isTestUser();
+    }
+    
+    // Audit logs - same as production but test users can read
+    match /deletionAuditLogs/{logId} {
+      allow read: if isAuthenticated() && (isVerifiedAdmin() || isTestUser());
+      allow create: if false; // Cloud Functions only
+      allow update: if isAuthenticated() && isVerifiedAdmin();
+      allow delete: if false;
+    }
+    
+    // Security alerts - same as production but test users can read
+    match /securityAlerts/{alertId} {
+      allow read: if isAuthenticated() && (isVerifiedAdmin() || isTestUser());
+      allow create: if false; // Cloud Functions only
+      allow update: if isAuthenticated() && isVerifiedAdmin();
+      allow delete: if false;
+    }
+    
+    // Default deny - strict like production
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

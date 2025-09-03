@@ -1,5 +1,39 @@
 {
-  "extends": "@react-native/typescript-config",
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["**/node_modules", "**/Pods"]
+  "extends": "../shared/tsconfig.base.json",
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
+    "lib": ["ES2017"],
+    "moduleResolution": "node",
+    "downlevelIteration": true,
+    "types": ["react-native", "jest"],
+
+    // React Native specific optimizations
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+
+    // Path mappings for mobile
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/shared/*": ["../shared/*"],
+      "@/components/*": ["./src/components/*"],
+      "@/services/*": ["./src/services/*"],
+      "@/screens/*": ["./src/screens/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/utils/*": ["./src/utils/*"],
+      "@/types/*": ["./src/types/*"],
+      "@/security/*": ["./src/security/*"]
+    }
+  },
+  "include": ["src/**/*", "App.tsx", "../shared/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "android",
+    "ios",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/test-execution/**",
+    "**/__tests__/**",
+    "**/coverage/**"
+  ]
 }

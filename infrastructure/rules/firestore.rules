@@ -1,0 +1,614 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions for user authentication and authorization
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isArtist() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'artist';
+    }
+    
+    function isCustomer() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'customer';
+    }
+    
+    function isParticipantInBooking(booking) {
+      return booking.customerId == request.auth.uid || booking.artistId == request.auth.uid;
+    }
+    
+    function isValidUserType(userType) {
+      return userType in ['customer', 'artist'];
+    }
+    
+    function isValidEmail(email) {
+      return email is string && 
+             isValidEmailFormat(email) &&
+             !isDisposableEmail(email) &&
+             !isDangerousDomain(email) &&
+             !isRoleBasedEmail(email) &&
+             email.size() >= 5 && email.size() <= 254;
+    }
+    
+    // ✅ 基本フォーマット検証の強化
+    function isValidEmailFormat(email) {
+      return email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') &&
+             !email.matches('.*\\.\\..*') && // 連続ドット禁止
+             !email.matches('^[.].*') && // 先頭ドット禁止
+             !email.matches('.*[.]@.*') && // @直前ドット禁止
+             !email.matches('.*@[.].*') && // @直後ドット禁止
+             !email.matches('.*@.*@.*'); // 複数@禁止
+    }
+    
+    // ✅ 使い捨てメールプロバイダーの検知
+    function isDisposableEmail(email) {
+      let domain = email.split('@')[1].lower();
+      return domain in [
+        '10minutemail.com', 'guerrillamail.com', 'tempmail.org',
+        'yopmail.com', 'mailinator.com', 'throwaway.email',
+        'temp-mail.org', 'getnada.com', 'sharklasers.com',
+        'maildrop.cc', 'guerrillamailblock.com', 'tempr.email',
+        'dispostable.com', 'fakeinbox.com', 'spamgourmet.com'
+      ];
+    }
+    
+    // ✅ 危険ドメインのブラックリスト
+    function isDangerousDomain(email) {
+      let domain = email.split('@')[1].lower();
+      return domain in [
+        'spam-domain.com', 'phishing-site.net', 'malware-host.org',
+        'blocked-domain.biz', 'fake-bank.ml', 'scam-site.ga'
+      ] || 
+      // 無料TLDの制限
+      domain.matches('.*\\.(tk|ml|ga|cf)$');
+    }
+    
+    // ✅ Role-basedメールの制限
+    function isRoleBasedEmail(email) {
+      let localPart = email.split('@')[0].lower();
+      return localPart in [
+        'admin', 'administrator', 'info', 'support', 'contact',
+        'sales', 'marketing', 'webmaster', 'postmaster', 'noreply',
+        'no-reply', 'help', 'service', 'office', 'team'
+      ];
+    }
+    
+    // ✅ メール変更のレート制限チェック
+    function isEmailChangeRateLimited(data) {
+      // 過去24時間以内のメール変更回数をチェック
+      return exists(/databases/$(database)/documents/email_changes/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/email_changes/$(request.auth.uid)).data.changeCount >= 3 &&
+             get(/databases/$(database)/documents/email_changes/$(request.auth.uid)).data.lastChange > request.time.toMillis() - 86400000; // 24時間
+    }
+    
+    // ✅ 正規化されたメールアドレスでの重複チェック
+    function normalizeEmail(email) {
+      let parts = email.lower().split('@');
+      let localPart = parts[0];
+      let domain = parts[1];
+      
+      // Gmailの場合、+以降を除去し、.を削除
+      if (domain == 'gmail.com') {
+        localPart = localPart.split('+')[0].replace('.', '');
+      }
+      
+      return localPart + '@' + domain;
+    }
+    
+    // Users collection rules
+    match /users/{userId} {
+      // Users can read their own profile and public profiles of artists
+      allow read: if isOwner(userId) || 
+                     (isAuthenticated() && get(/databases/$(database)/documents/users/$(userId)).data.userType == 'artist');
+      
+      // Users can only create/update their own profile with valid data
+      allow create, update: if isOwner(userId) && 
+                               validateUserData(resource.data) &&
+                               isValidUserType(resource.data.userType) &&
+                               isValidEmail(resource.data.email) &&
+                               !isEmailChangeRateLimited(resource.data);
+      
+      // Users cannot delete their profiles (soft delete should be used instead)
+      allow delete: if false;
+      
+      function validateUserData(data) {
+        return data.keys().hasAll(['uid', 'email', 'userType', 'createdAt', 'updatedAt']) &&
+               data.uid is string &&
+               data.email is string &&
+               data.userType is string &&
+               data.createdAt is timestamp &&
+               data.updatedAt is timestamp &&
+               (data.userType == 'customer' || validateArtistData(data));
+      }
+      
+      function validateArtistData(data) {
+        return data.userType == 'artist' &&
+               data.keys().hasAny(['artistInfo']) &&
+               (data.artistInfo == null || 
+                (data.artistInfo.keys().hasAny(['specialties', 'bio', 'pricing', 'rating', 'reviewCount']) &&
+                 (data.artistInfo.specialties == null || data.artistInfo.specialties is list) &&
+                 (data.artistInfo.rating == null || (data.artistInfo.rating is number && data.artistInfo.rating >= 0 && data.artistInfo.rating <= 5)) &&
+                 (data.artistInfo.reviewCount == null || (data.artistInfo.reviewCount is number && data.artistInfo.reviewCount >= 0))));
+      }
+      
+      // ✅ 新機能: ポートフォリオ閲覧権限チェック
+      function isArtistViewAuthorized(artistId) {
+        return isCustomer() && (
+          // マッチング履歴がある顧客
+          hasMatchingHistory(artistId) ||
+          // アクティブな問い合わせがある顧客
+          hasActiveInquiry(artistId) ||
+          // 完了した予約でレビュー権限がある顧客
+          hasReviewRights(artistId)
+        );
+      }
+      
+      function hasMatchingHistory(artistId) {
+        return exists(/databases/$(database)/documents/matchingHistory/$(request.auth.uid + '_' + artistId));
+      }
+      
+      function hasActiveInquiry(artistId) {
+        return exists(/databases/$(database)/documents/inquiries/$(request.auth.uid + '_' + artistId)) &&
+               get(/databases/$(database)/documents/inquiries/$(request.auth.uid + '_' + artistId)).data.status in ['pending', 'responded'];
+      }
+      
+      function hasReviewRights(artistId) {
+        return exists(/databases/$(database)/documents/confirmedBookings/$(request.auth.uid + '_' + artistId)) &&
+               get(/databases/$(database)/documents/confirmedBookings/$(request.auth.uid + '_' + artistId)).data.status == 'completed';
+      }
+    }
+    
+    // Portfolio items collection rules
+    match /portfolioItems/{itemId} {
+      // ✅ 厳格化: 必要最小限のユーザーのみアクセス可能
+      allow read: if isAuthenticated() && (
+        isOwner(resource.data.artistId) || // アーティスト本人
+        isArtistViewAuthorized(resource.data.artistId) // 認可された顧客のみ
+      );
+      
+      // Only the artist owner can create/update/delete their portfolio items
+      allow create, update, delete: if isAuthenticated() && 
+                                       isOwner(resource.data.artistId) &&
+                                       isArtist();
+      
+      // Validate portfolio item data
+      allow create, update: if validatePortfolioData(resource.data);
+      
+      function validatePortfolioData(data) {
+        return data.keys().hasAll(['artistId', 'imageUrl', 'createdAt', 'updatedAt']) &&
+               data.artistId is string &&
+               data.imageUrl is string &&
+               data.createdAt is timestamp &&
+               data.updatedAt is timestamp &&
+               (data.tags == null || data.tags is list) &&
+               (data.aiAnalysis == null || data.aiAnalysis is map);
+      }
+    }
+    
+    // Inquiries collection rules
+    match /inquiries/{inquiryId} {
+      // Only participants (customer and artist) can read inquiries
+      allow read: if isAuthenticated() && 
+                     (isOwner(resource.data.customerId) || isOwner(resource.data.artistId));
+      
+      // Only customers can create inquiries
+      allow create: if isAuthenticated() && 
+                       isCustomer() && 
+                       isOwner(resource.data.customerId) &&
+                       validateInquiryData(resource.data);
+      
+      // Only the artist can update inquiry status
+      allow update: if isAuthenticated() && 
+                       isOwner(resource.data.artistId) && 
+                       isArtist();
+      
+      // No one can delete inquiries
+      allow delete: if false;
+      
+      function validateInquiryData(data) {
+        return data.keys().hasAll(['customerId', 'artistId', 'status', 'createdAt']) &&
+               data.customerId is string &&
+               data.artistId is string &&
+               data.status in ['pending', 'responded', 'closed'] &&
+               data.createdAt is timestamp;
+      }
+    }
+    
+    // Booking requests collection rules
+    match /bookingRequests/{bookingId} {
+      // Only participants (customer and artist) can read booking requests
+      allow read: if isAuthenticated() && 
+                     (isOwner(resource.data.customerId) || isOwner(resource.data.artistId));
+      
+      // Only customers can create booking requests
+      allow create: if isAuthenticated() && 
+                       isCustomer() && 
+                       isOwner(resource.data.customerId) &&
+                       validateBookingRequestData(resource.data);
+      
+      // Only participants can update booking requests
+      allow update: if isAuthenticated() && 
+                       (isOwner(resource.data.customerId) || isOwner(resource.data.artistId)) &&
+                       validateBookingStatusUpdate(resource.data, request.resource.data);
+      
+      // No one can delete booking requests
+      allow delete: if false;
+      
+      function validateBookingRequestData(data) {
+        return data.keys().hasAll(['customerId', 'artistId', 'status', 'createdAt', 'updatedAt', 'preferredDate']) &&
+               data.customerId is string &&
+               data.artistId is string &&
+               data.status == 'pending' &&
+               data.createdAt is timestamp &&
+               data.updatedAt is timestamp &&
+               data.preferredDate is timestamp &&
+               data.preferredDate > request.time;
+      }
+      
+      function validateBookingStatusUpdate(oldData, newData) {
+        let validTransitions = {
+          'pending': ['accepted', 'declined', 'negotiating', 'cancelled'],
+          'accepted': ['confirmed', 'cancelled'],
+          'declined': [],
+          'negotiating': ['accepted', 'declined', 'cancelled'],
+          'confirmed': ['completed', 'cancelled'],
+          'completed': [],
+          'cancelled': []
+        };
+        
+        return newData.status in validTransitions[oldData.status];
+      }
+    }
+    
+    // Counter offer details collection rules
+    match /counterOfferDetails/{detailId} {
+      // Only participants can read counter offer details
+      allow read: if isAuthenticated() && 
+                     exists(/databases/$(database)/documents/bookingRequests/$(resource.data.bookingId)) &&
+                     isParticipantInBooking(get(/databases/$(database)/documents/bookingRequests/$(resource.data.bookingId)).data);
+      
+      // Only artists can create counter offer details
+      allow create: if isAuthenticated() && 
+                       isArtist() &&
+                       exists(/databases/$(database)/documents/bookingRequests/$(resource.data.bookingId));
+      
+      // No updates or deletes allowed
+      allow update, delete: if false;
+    }
+    
+    // Confirmed bookings collection rules
+    match /confirmedBookings/{confirmedBookingId} {
+      // Only participants can read confirmed bookings
+      allow read: if isAuthenticated() && 
+                     (isOwner(resource.data.customerId) || isOwner(resource.data.artistId));
+      
+      // Only the booking service can create confirmed bookings (through server-side logic)
+      allow create: if isAuthenticated() && 
+                       isArtist() && 
+                       isOwner(resource.data.artistId) &&
+                       validateConfirmedBookingData(resource.data);
+      
+      // Only participants can update status to completed
+      allow update: if isAuthenticated() && 
+                       (isOwner(resource.data.customerId) || isOwner(resource.data.artistId)) &&
+                       (resource.data.status == 'scheduled' && request.resource.data.status == 'completed');
+      
+      // No deletes allowed
+      allow delete: if false;
+      
+      function validateConfirmedBookingData(data) {
+        return data.keys().hasAll(['bookingRequestId', 'customerId', 'artistId', 'appointmentDate', 'status', 'createdAt']) &&
+               data.bookingRequestId is string &&
+               data.customerId is string &&
+               data.artistId is string &&
+               data.appointmentDate is timestamp &&
+               data.status == 'scheduled' &&
+               data.createdAt is timestamp;
+      }
+    }
+    
+    // Reviews collection rules
+    match /reviews/{reviewId} {
+      // Anyone can read reviews (public visibility for transparency)
+      allow read: if isAuthenticated();
+      
+      // Only customers can create reviews for bookings they participated in
+      allow create: if isAuthenticated() && 
+                       isCustomer() && 
+                       isOwner(resource.data.customerId) &&
+                       validateReviewData(resource.data) &&
+                       exists(/databases/$(database)/documents/confirmedBookings/$(resource.data.bookingId)) &&
+                       get(/databases/$(database)/documents/confirmedBookings/$(resource.data.bookingId)).data.customerId == request.auth.uid &&
+                       get(/databases/$(database)/documents/confirmedBookings/$(resource.data.bookingId)).data.status == 'completed';
+      
+      // Customers can update their own reviews within 30 days
+      allow update: if isAuthenticated() && 
+                       isOwner(resource.data.customerId) &&
+                       resource.data.createdAt > timestamp.date(2024, 1, 1) && // Ensure createdAt exists
+                       (request.time - resource.data.createdAt) < duration.value(30, 'd');
+      
+      // No one can delete reviews (for transparency)
+      allow delete: if false;
+      
+      function validateReviewData(data) {
+        return data.keys().hasAll(['customerId', 'artistId', 'bookingId', 'rating', 'createdAt']) &&
+               data.customerId is string &&
+               data.artistId is string &&
+               data.bookingId is string &&
+               data.rating is number &&
+               data.rating >= 1 && data.rating <= 5 &&
+               data.createdAt is timestamp &&
+               (data.comment == null || data.comment is string);
+      }
+    }
+    
+    // Artist schedules collection rules
+    match /artistSchedules/{scheduleId} {
+      // Anyone can read artist schedules (for booking availability)
+      allow read: if isAuthenticated();
+      
+      // Only the artist owner can create/update their schedules
+      allow create, update: if isAuthenticated() && 
+                               isArtist() && 
+                               isOwner(resource.data.artistId);
+      
+      // Artists can delete their own schedules
+      allow delete: if isAuthenticated() && 
+                       isArtist() && 
+                       isOwner(resource.data.artistId);
+    }
+    
+    // Matching history collection rules
+    match /matchingHistory/{historyId} {
+      // Only the customer who performed the matching can read their history
+      allow read: if isAuthenticated() && 
+                     isOwner(resource.data.customerId);
+      
+      // Only customers can create matching history
+      allow create: if isAuthenticated() && 
+                       isCustomer() && 
+                       isOwner(resource.data.customerId);
+      
+      // No updates or deletes (for analytics purposes)
+      allow update, delete: if false;
+    }
+    
+    // Auto-tagging history collection rules
+    match /autoTaggingHistory/{historyId} {
+      // Only the artist owner can read their auto-tagging history
+      allow read: if isAuthenticated() && 
+                     isOwner(resource.data.artistId);
+      
+      // System can create auto-tagging history
+      allow create: if isAuthenticated() && 
+                       isArtist() && 
+                       isOwner(resource.data.artistId);
+      
+      // No updates or deletes (for learning and analytics)
+      allow update, delete: if false;
+    }
+    
+    // Geo search history collection rules
+    match /geoSearchHistory/{historyId} {
+      // Only the user who performed the search can read their history
+      allow read: if isAuthenticated() && 
+                     isOwner(resource.data.userId);
+      
+      // Users can create geo search history
+      allow create: if isAuthenticated() && 
+                       isOwner(resource.data.userId);
+      
+      // No updates or deletes (for analytics)
+      allow update, delete: if false;
+    }
+    
+    // Chat rooms metadata (actual messages are in Realtime Database)
+    match /chatRooms/{roomId} {
+      // Only participants can read chat room metadata
+      allow read: if isAuthenticated() && 
+                     (request.auth.uid in resource.data.participants);
+      
+      // Participants can create chat rooms
+      allow create: if isAuthenticated() && 
+                       (request.auth.uid in resource.data.participants) &&
+                       validateChatRoomData(resource.data);
+      
+      // Participants can update chat room metadata (e.g., last message info)
+      allow update: if isAuthenticated() && 
+                       (request.auth.uid in resource.data.participants);
+      
+      // No deletes (for message history preservation)
+      allow delete: if false;
+      
+      function validateChatRoomData(data) {
+        return data.keys().hasAll(['participants', 'createdAt']) &&
+               data.participants is list &&
+               data.participants.size() == 2 &&
+               data.createdAt is timestamp;
+      }
+    }
+    
+    // ✅ Email changes tracking collection rules
+    match /email_changes/{userId} {
+      // Only the user can read their email change history
+      allow read: if isOwner(userId);
+      
+      // System can create/update email change tracking
+      allow create, update: if isOwner(userId) && 
+                               validateEmailChangeData(resource.data);
+      
+      // No deletes (for security audit trail)
+      allow delete: if false;
+      
+      function validateEmailChangeData(data) {
+        return data.keys().hasAll(['userId', 'changeCount', 'lastChange', 'previousEmail']) &&
+               data.userId is string &&
+               data.changeCount is number &&
+               data.changeCount >= 0 &&
+               data.lastChange is number &&
+               data.previousEmail is string;
+      }
+    }
+    
+    // ✅ Normalized email index for duplicate prevention
+    match /email_index/{normalizedEmail} {
+      // Only the system can read email index
+      allow read: if request.auth.uid != null;
+      
+      // Only the system can create/update email index
+      allow create, update: if request.auth.uid != null &&
+                               validateEmailIndexData(resource.data);
+      
+      // Only when user deletes their account
+      allow delete: if isOwner(resource.data.userId);
+      
+      function validateEmailIndexData(data) {
+        return data.keys().hasAll(['userId', 'originalEmail', 'normalizedEmail', 'createdAt']) &&
+               data.userId is string &&
+               data.originalEmail is string &&
+               data.normalizedEmail is string &&
+               data.createdAt is timestamp;
+      }
+    }
+    
+    // ✅ SEC-008: 削除履歴監査ログ
+    match /deletionAuditLogs/{logId} {
+      // 管理者のみ削除履歴を閲覧可能
+      allow read: if isAuthenticated() && 
+                     isVerifiedAdmin();
+      
+      // システム（Cloud Functions）のみ作成可能
+      allow create: if false; // Cloud Functions経由のみ
+      
+      // 管理者は理由やコメントを追加可能
+      allow update: if isAuthenticated() && 
+                       isVerifiedAdmin() && 
+                       onlyUpdatingFields(['adminComment', 'reviewedBy', 'reviewedAt']);
+      
+      // 削除履歴自体は削除不可
+      allow delete: if false;
+    }
+    
+    // ✅ SEC-008: セキュリティアラート
+    match /securityAlerts/{alertId} {
+      // 管理者とセキュリティチームのみ閲覧可能
+      allow read: if isAuthenticated() && 
+                     (isVerifiedAdmin() || isSecurityTeam());
+      
+      // システムのみ作成可能
+      allow create: if false; // Cloud Functions経由のみ
+      
+      // 管理者は対応状況を更新可能
+      allow update: if isAuthenticated() && 
+                       isVerifiedAdmin() && 
+                       onlyUpdatingFields(['status', 'assignedTo', 'actionTaken', 'resolvedAt']);
+      
+      // セキュリティアラートは削除不可
+      allow delete: if false;
+    }
+    
+    // ✅ SEC-008: 管理者権限管理
+    match /adminPrivileges/{adminId} {
+      // 管理者本人とスーパー管理者のみ閲覧可能
+      allow read: if isAuthenticated() && 
+                     (isOwner(adminId) || isSuperAdmin());
+      
+      // スーパー管理者のみ作成・更新可能
+      allow create, update: if isAuthenticated() && 
+                               isSuperAdmin() && 
+                               validateAdminPrivilegeData(request.resource.data);
+      
+      // スーパー管理者のみ削除可能（権限剥奪）
+      allow delete: if isAuthenticated() && isSuperAdmin();
+      
+      function validateAdminPrivilegeData(data) {
+        return data.keys().hasAll(['adminLevel', 'verifiedAdmin', 'permissions', 'createdAt', 'updatedAt']) &&
+               data.adminLevel in ['moderate', 'super'] &&
+               data.verifiedAdmin is bool &&
+               data.permissions is map &&
+               data.createdAt is timestamp &&
+               data.updatedAt is timestamp;
+      }
+    }
+    
+    // ✅ SEC-008: 画像バックアップ記録
+    match /deletedImageBackups/{backupId} {
+      // 管理者のみ閲覧可能
+      allow read: if isAuthenticated() && isVerifiedAdmin();
+      
+      // システムのみ作成可能
+      allow create: if false; // Cloud Functions経由のみ
+      
+      // 更新不可
+      allow update: if false;
+      
+      // スーパー管理者のみ削除可能（保存期間終了時）
+      allow delete: if isAuthenticated() && isSuperAdmin();
+    }
+    
+    // ✅ SEC-008: 画像復元記録
+    match /imageRestorations/{restorationId} {
+      // 管理者のみ閲覧可能
+      allow read: if isAuthenticated() && isVerifiedAdmin();
+      
+      // 管理者のみ復元要求可能
+      allow create: if isAuthenticated() && 
+                       isVerifiedAdmin() && 
+                       isOwner(request.resource.data.requestedBy);
+      
+      // システムのみステータス更新可能
+      allow update: if false; // Cloud Functions経由のみ
+      
+      // 復元記録は削除不可
+      allow delete: if false;
+    }
+    
+    // ✅ 復元された画像の記録
+    match /restoredImages/{restoredId} {
+      // 管理者のみ閲覧可能
+      allow read: if isAuthenticated() && isVerifiedAdmin();
+      
+      // システムのみ作成可能
+      allow create: if false; // Cloud Functions経由のみ
+      
+      // 更新・削除不可
+      allow update, delete: if false;
+    }
+    
+    // ✅ SEC-008: ヘルパー関数の追加
+    function isVerifiedAdmin() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.verifiedAdmin == true &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminLevel in ['moderate', 'super'];
+    }
+    
+    function isSuperAdmin() {
+      return isVerifiedAdmin() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminLevel == 'super';
+    }
+    
+    function isSecurityTeam() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.securityTeam == true;
+    }
+    
+    function onlyUpdatingFields(allowedFields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields);
+    }
+
+    // Default deny rule - no access to any other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

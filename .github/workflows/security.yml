@@ -1,0 +1,64 @@
+# Security Check Workflow
+name: Security Check
+on: [push, pull_request]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run API Key Detection Scan
+        run: |
+          echo "🔍 APIキー検出スキャンを実行中..."
+          
+          # APIキー検出スキャン
+          if grep -r "AIzaSy[a-zA-Z0-9_-]\{35,39\}" . --exclude-dir=node_modules --exclude-dir=.git --exclude="*.md" --exclude-dir=".github" --exclude="SECURITY_*" 2>/dev/null | grep -v "GOOGLE_API_KEY_PATTERN" | grep -v "test" | grep -v "Test" | grep -v "Mock"; then
+            echo "🚨 実際のAPIキーがリポジトリ内で検出されました！"
+            echo "詳細を確認してください："
+            grep -r "AIzaSy[a-zA-Z0-9_-]\{35,39\}" . --exclude-dir=node_modules --exclude-dir=.git --exclude="*.md" --exclude-dir=".github" --exclude="SECURITY_*" 2>/dev/null | grep -v "GOOGLE_API_KEY_PATTERN" | grep -v "test" | grep -v "Test" | grep -v "Mock" || true
+            exit 1
+          else
+            echo "✅ APIキーの流出は検出されませんでした"
+          fi
+          
+          # 機密ファイルの存在チェック
+          echo "🔍 機密ファイルの存在チェック..."
+          
+          if find . -name "google-services.json" -not -path "*/node_modules/*" -not -name "*.template" | head -1 | grep -q .; then
+            echo "🚨 google-services.json ファイルが検出されました！"
+            find . -name "google-services.json" -not -path "*/node_modules/*" -not -name "*.template"
+            exit 1
+          else
+            echo "✅ 機密ファイルは検出されませんでした"
+          fi
+          
+          # .env ファイルの存在チェック
+          if find . -name ".env*" -not -path "*/node_modules/*" | head -1 | grep -q .; then
+            echo "🚨 .env ファイルがリポジトリに含まれています！"
+            find . -name ".env*" -not -path "*/node_modules/*"
+            exit 1
+          else
+            echo "✅ .env ファイルは適切に除外されています"
+          fi
+          
+          echo "🎉 セキュリティスキャンが正常に完了しました！"
+      
+      - name: Check .gitignore Configuration
+        run: |
+          echo "🔍 .gitignore の設定をチェック中..."
+          
+          # 必須の除外設定をチェック
+          required_patterns=(
+            ".env"
+            "google-services.json"
+            "GoogleService-Info.plist"
+            "*.keystore"
+          )
+          
+          for pattern in "${required_patterns[@]}"; do
+            if grep -q "$pattern" .gitignore; then
+              echo "✅ $pattern が .gitignore に設定されています"
+            else
+              echo "⚠️ $pattern が .gitignore に設定されていません"
+            fi
+          done

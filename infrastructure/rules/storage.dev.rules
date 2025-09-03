@@ -1,0 +1,76 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for Development Environment
+// ⚠️ This ruleset is for DEVELOPMENT only - relaxed rules for testing
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Helper functions for development
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isTestUser() {
+      return isAuthenticated() && 
+             request.auth.token.email != null &&
+             (request.auth.token.email.matches('.*@test\\.com') ||
+              request.auth.token.email.matches('.*@example\\.com') ||
+              request.auth.token.email.matches('.*@localhost'));
+    }
+    
+    function isValidImageType() {
+      return resource.contentType.matches('image/.*');
+    }
+    
+    function isValidImageSize() {
+      return resource.size <= 20 * 1024 * 1024; // 20MB limit for dev
+    }
+    
+    // Development: Allow test users broad access
+    match /{allPaths=**} {
+      allow read, write: if isTestUser();
+    }
+    
+    // User profile images - relaxed for testing
+    match /users/{userId}/profile/{imageId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && 
+                               (isOwner(userId) || isTestUser()) &&
+                               isValidImageType();
+      allow delete: if isAuthenticated() && 
+                       (isOwner(userId) || isTestUser());
+    }
+    
+    // Artist portfolio images - relaxed for testing
+    match /artists/{artistId}/portfolio/{imageId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && 
+                               (isOwner(artistId) || isTestUser()) &&
+                               isValidImageType();
+      allow delete: if isAuthenticated() && 
+                       (isOwner(artistId) || isTestUser());
+    }
+    
+    // Chat message images - relaxed for testing
+    match /chat/{roomId}/images/{imageId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidImageType();
+      allow delete: if isAuthenticated(); // Easy cleanup in dev
+    }
+    
+    // Test data - open access
+    match /testData/{allPaths=**} {
+      allow read, write: if true; // Open for test data
+    }
+    
+    // Default allow for development - ⚠️ NEVER use in production
+    match /{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isValidImageSize();
+    }
+  }
+}

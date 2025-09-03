@@ -1,0 +1,258 @@
+rules_version = '2';
+
+// Production environment - strict security rules
+// 🔒 This ruleset provides maximum security for production data
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Production helper functions - strict validation
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isArtist() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'artist';
+    }
+    
+    function isCustomer() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.userType == 'customer';
+    }
+    
+    function isVerifiedAdmin() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.verifiedAdmin == true &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminLevel in ['moderate', 'super'];
+    }
+    
+    function isSuperAdmin() {
+      return isVerifiedAdmin() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.adminLevel == 'super';
+    }
+    
+    function isSecurityTeam() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.securityTeam == true;
+    }
+    
+    function onlyUpdatingFields(allowedFields) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedFields);
+    }
+    
+    // Strict email validation for production
+    function isValidEmail(email) {
+      return email is string && 
+             email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$') &&
+             !email.matches('.*\\.\\..*') && // No consecutive dots
+             !isDisposableEmail(email) &&
+             !isDangerousDomain(email) &&
+             !isRoleBasedEmail(email);
+    }
+    
+    function isDisposableEmail(email) {
+      return email.matches('.*@(10minutemail|guerrillamail|tempmail|throwaway)\\.');
+    }
+    
+    function isDangerousDomain(email) {
+      return email.matches('.*@(example|test|invalid|localhost)\\.');
+    }
+    
+    function isRoleBasedEmail(email) {
+      return email.matches('^(admin|administrator|root|support|info|contact|sales|marketing|noreply|no-reply)@');
+    }
+    
+    // Users collection - production strict rules
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (
+        isOwner(userId) || 
+        (exists(/databases/$(database)/documents/users/$(userId)) &&
+         get(/databases/$(database)/documents/users/$(userId)).data.userType == 'artist')
+      );
+      
+      allow create: if isAuthenticated() && 
+                       isOwner(userId) && 
+                       validateStrictUserCreation(request.resource.data);
+      
+      allow update: if isAuthenticated() && 
+                       isOwner(userId) && 
+                       validateStrictUserUpdate(resource.data, request.resource.data);
+      
+      // No deletion allowed in production
+      allow delete: if false;
+      
+      function validateStrictUserCreation(data) {
+        return data.keys().hasAll(['email', 'userType', 'createdAt', 'updatedAt']) &&
+               data.userType in ['customer', 'artist'] &&
+               isValidEmail(data.email) &&
+               data.email == request.auth.token.email &&
+               data.createdAt is timestamp &&
+               data.updatedAt is timestamp &&
+               data.createdAt == data.updatedAt;
+      }
+      
+      function validateStrictUserUpdate(currentData, newData) {
+        return newData.email == currentData.email &&
+               newData.userType == currentData.userType &&
+               newData.createdAt == currentData.createdAt &&
+               newData.updatedAt is timestamp &&
+               newData.updatedAt > currentData.updatedAt;
+      }
+    }
+    
+    // Portfolio items - strict artist-only access
+    match /portfolioItems/{itemId} {
+      allow read: if isAuthenticated() && (
+        isCustomer() || 
+        isOwner(resource.data.artistId)
+      );
+      
+      allow create: if isAuthenticated() && 
+                       isArtist() && 
+                       isOwner(request.resource.data.artistId) &&
+                       validatePortfolioData(request.resource.data);
+      
+      allow update: if isAuthenticated() && 
+                       isArtist() &&
+                       isOwner(resource.data.artistId) &&
+                       validatePortfolioUpdate(resource.data, request.resource.data);
+      
+      allow delete: if isAuthenticated() && 
+                       isArtist() &&
+                       isOwner(resource.data.artistId);
+      
+      function validatePortfolioData(data) {
+        return data.keys().hasAll(['artistId', 'imageUrl', 'tags', 'createdAt']) &&
+               data.artistId is string &&
+               data.imageUrl is string &&
+               data.tags is list &&
+               data.createdAt is timestamp;
+      }
+      
+      function validatePortfolioUpdate(currentData, newData) {
+        return newData.artistId == currentData.artistId &&
+               newData.createdAt == currentData.createdAt;
+      }
+    }
+    
+    // Chat rooms - strict participant access
+    match /chatRooms/{roomId} {
+      allow read: if isAuthenticated() && 
+                     request.auth.uid in resource.data.participants;
+      
+      allow create: if isAuthenticated() && 
+                       request.auth.uid in request.resource.data.participants &&
+                       validateChatRoomCreation(request.resource.data);
+      
+      allow update: if isAuthenticated() && 
+                       request.auth.uid in resource.data.participants &&
+                       validateChatRoomUpdate(resource.data, request.resource.data);
+      
+      // No deletion in production
+      allow delete: if false;
+      
+      function validateChatRoomCreation(data) {
+        return data.keys().hasAll(['participants', 'createdAt', 'lastActivity']) &&
+               data.participants is list &&
+               data.participants.size() == 2 &&
+               data.createdAt is timestamp &&
+               data.lastActivity is timestamp;
+      }
+      
+      function validateChatRoomUpdate(currentData, newData) {
+        return newData.participants == currentData.participants &&
+               newData.createdAt == currentData.createdAt;
+      }
+    }
+    
+    // Messages - strict sender validation
+    match /chatRooms/{roomId}/messages/{messageId} {
+      allow read: if isAuthenticated() && 
+                     request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants;
+      
+      allow create: if isAuthenticated() && 
+                       request.auth.uid in get(/databases/$(database)/documents/chatRooms/$(roomId)).data.participants &&
+                       isOwner(request.resource.data.senderId) &&
+                       validateMessageData(request.resource.data);
+      
+      // Messages can only be updated by sender within 5 minutes
+      allow update: if isAuthenticated() && 
+                       isOwner(resource.data.senderId) &&
+                       (request.time.toMillis() - resource.data.timestamp.toMillis()) < 300000 &&
+                       onlyUpdatingFields(['content', 'updatedAt']);
+      
+      // No message deletion in production
+      allow delete: if false;
+      
+      function validateMessageData(data) {
+        return data.keys().hasAll(['senderId', 'content', 'timestamp']) &&
+               data.senderId == request.auth.uid &&
+               data.content is string &&
+               data.content.size() <= 2000 &&
+               data.timestamp is timestamp;
+      }
+    }
+    
+    // Audit logs - admin access only
+    match /deletionAuditLogs/{logId} {
+      allow read: if isAuthenticated() && isVerifiedAdmin();
+      allow create: if false; // Cloud Functions only
+      allow update: if isAuthenticated() && 
+                       isVerifiedAdmin() && 
+                       onlyUpdatingFields(['adminComment', 'reviewedBy', 'reviewedAt']);
+      allow delete: if false;
+    }
+    
+    // Security alerts - admin and security team only
+    match /securityAlerts/{alertId} {
+      allow read: if isAuthenticated() && (isVerifiedAdmin() || isSecurityTeam());
+      allow create: if false; // Cloud Functions only
+      allow update: if isAuthenticated() && 
+                       isVerifiedAdmin() && 
+                       onlyUpdatingFields(['status', 'assignedTo', 'actionTaken', 'resolvedAt']);
+      allow delete: if false;
+    }
+    
+    // Admin privileges - super admin only
+    match /adminPrivileges/{adminId} {
+      allow read: if isAuthenticated() && (isOwner(adminId) || isSuperAdmin());
+      allow create, update: if isAuthenticated() && isSuperAdmin();
+      allow delete: if isAuthenticated() && isSuperAdmin();
+    }
+    
+    // Backup records - admin only
+    match /deletedImageBackups/{backupId} {
+      allow read: if isAuthenticated() && isVerifiedAdmin();
+      allow create: if false; // Cloud Functions only
+      allow update: if false;
+      allow delete: if isAuthenticated() && isSuperAdmin();
+    }
+    
+    // Restoration records - admin only
+    match /imageRestorations/{restorationId} {
+      allow read: if isAuthenticated() && isVerifiedAdmin();
+      allow create: if isAuthenticated() && isVerifiedAdmin();
+      allow update: if false; // Cloud Functions only
+      allow delete: if false;
+    }
+    
+    // Restored images - admin only
+    match /restoredImages/{restoredId} {
+      allow read: if isAuthenticated() && isVerifiedAdmin();
+      allow create: if false; // Cloud Functions only
+      allow update, delete: if false;
+    }
+    
+    // Production strict default - no access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "chatRooms": {
+      "$roomId": {
+        ".read": "auth != null && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()",
+        ".write": "auth != null && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()",
+        "messages": {
+          "$messageId": {
+            ".read": "auth != null && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()",
+            ".write": "auth != null && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists() && newData.child('senderId').val() == auth.uid && newData.child('timestamp').val() == now",
+            ".validate": "newData.hasChildren(['senderId', 'content', 'timestamp', 'type']) && newData.child('content').isString() && newData.child('senderId').val() == auth.uid && newData.child('type').val().matches('^(text|image|booking)$')"
+          }
+        },
+        "typing": {
+          "$userId": {
+            ".read": "auth != null && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()",
+            ".write": "auth != null && $userId == auth.uid && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()",
+            ".validate": "newData.hasChildren(['isTyping', 'timestamp']) && newData.child('isTyping').isBoolean()"
+          }
+        },
+        "readStatus": {
+          "$userId": {
+            ".read": "auth != null && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()",
+            ".write": "auth != null && $userId == auth.uid && root.child('chatRooms').child($roomId).child('participants').child(auth.uid).exists()"
+          }
+        }
+      }
+    },
+    "presence": {
+      "$userId": {
+        ".read": "auth != null",
+        ".write": "auth != null && $userId == auth.uid",
+        ".validate": "newData.hasChildren(['online', 'lastSeen', 'device']) && newData.child('online').isBoolean() && newData.child('device').isString()"
+      }
+    },
+    "stagingTestData": {
+      "$path": {
+        ".read": "auth != null && (auth.token.email.matches('.*@staging-test\\\\.com') || auth.token.email.matches('.*@tattoo-journey-staging\\\\.com'))",
+        ".write": "auth != null && (auth.token.email.matches('.*@staging-test\\\\.com') || auth.token.email.matches('.*@tattoo-journey-staging\\\\.com'))"
+      }
+    }
+  }
+}

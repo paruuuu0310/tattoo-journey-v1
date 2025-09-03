@@ -1,0 +1,96 @@
+rules_version = '2';
+
+// Development environment - relaxed rules for testing
+// ⚠️  This ruleset is for DEVELOPMENT only - NOT for production use
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isTestUser() {
+      return isAuthenticated() && 
+             request.auth.token.email != null &&
+             (request.auth.token.email.matches('.*@test\\.com') ||
+              request.auth.token.email.matches('.*@example\\.com') ||
+              request.auth.token.email.matches('.*@localhost'));
+    }
+    
+    // ✅ Development: Allow test users broad access for testing
+    match /{document=**} {
+      allow read, write: if isTestUser();
+    }
+    
+    // Users collection - relaxed for development
+    match /users/{userId} {
+      // Allow read access for authenticated users (for UI testing)
+      allow read: if isAuthenticated();
+      
+      // Users can create and update their own profiles
+      allow create, update: if isAuthenticated() && isOwner(userId);
+      
+      // Allow deletion in development for cleanup
+      allow delete: if isAuthenticated() && (isOwner(userId) || isTestUser());
+    }
+    
+    // Portfolio items - relaxed for testing
+    match /portfolioItems/{itemId} {
+      // Allow read for authenticated users (portfolio browsing tests)
+      allow read: if isAuthenticated();
+      
+      // Artists can manage their portfolio
+      allow create, update, delete: if isAuthenticated();
+    }
+    
+    // Chat rooms - relaxed for testing
+    match /chatRooms/{roomId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated();
+      allow delete: if isTestUser(); // Test cleanup
+    }
+    
+    // Messages - relaxed for chat testing
+    match /chatRooms/{roomId}/messages/{messageId} {
+      allow read, write: if isAuthenticated();
+      allow delete: if isTestUser(); // Message cleanup in tests
+    }
+    
+    // Test data collections - full access
+    match /testData/{document=**} {
+      allow read, write: if true; // Open access for test data
+    }
+    
+    // Development utilities
+    match /devUtils/{document=**} {
+      allow read, write: if isAuthenticated();
+    }
+    
+    // Audit logs - readable for debugging
+    match /deletionAuditLogs/{logId} {
+      allow read: if isAuthenticated();
+      allow create: if false; // Cloud Functions only
+      allow update: if isTestUser(); // Test cleanup
+      allow delete: if false;
+    }
+    
+    // Security alerts - readable for debugging
+    match /securityAlerts/{alertId} {
+      allow read: if isAuthenticated();
+      allow create: if false; // Cloud Functions only
+      allow update: if isTestUser(); // Test status updates
+      allow delete: if false;
+    }
+    
+    // Default allow for development - ⚠️ NEVER use in production
+    match /{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (isOwner(resource.id) || isTestUser());
+    }
+  }
+}
