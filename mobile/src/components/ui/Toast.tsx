@@ -73,7 +73,7 @@ export const Toast: React.FC<ToastProps> = ({
       case "top":
         return { top: 60 };
       case "center":
-        return { top: "50%", marginTop: -25 };
+        return { top: "50%" as const, marginTop: -25 };
       case "bottom":
         return { bottom: 100 };
       default:
@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: DesignTokens.typography.sizes.sm,
     fontFamily: DesignTokens.typography.fonts.primary,
-    fontWeight: DesignTokens.typography.weights.medium,
+    fontWeight: "500" as const,
     color: DesignTokens.colors.dark.text.primary,
     lineHeight: 20,
   },

@@ -49,26 +49,20 @@ export const Tag: React.FC<TagProps> = ({
     textStyle,
   ];
 
-  const Component = onPress ? TouchableOpacity : React.Fragment;
-  const touchableProps = onPress
-    ? {
-        onPress,
-        disabled,
-        activeOpacity: 0.7,
-      }
-    : {};
-
-  return (
-    <Component {...touchableProps} style={onPress ? tagStyle : undefined}>
-      {onPress ? (
+  if (onPress) {
+    return (
+      <TouchableOpacity
+        style={tagStyle}
+        onPress={onPress}
+        disabled={disabled}
+        activeOpacity={0.7}
+      >
         <Text style={labelStyle}>{label}</Text>
-      ) : (
-        <React.Fragment>
-          <Text style={[tagStyle, labelStyle]}>{label}</Text>
-        </React.Fragment>
-      )}
-    </Component>
-  );
+      </TouchableOpacity>
+    );
+  }
+
+  return <Text style={[tagStyle, labelStyle]}>{label}</Text>;
 };
 
 const styles = StyleSheet.create({
@@ -137,7 +131,7 @@ const styles = StyleSheet.create({
   // Text styles
   text: {
     fontFamily: DesignTokens.typography.fonts.primary,
-    fontWeight: DesignTokens.typography.weights.medium,
+    fontWeight: "500" as const,
   },
   defaultText: {
     color: DesignTokens.colors.dark.text.secondary,
@@ -151,7 +145,7 @@ const styles = StyleSheet.create({
 
   // Selected text styles
   selectedText: {
-    fontWeight: DesignTokens.typography.weights.semibold,
+    fontWeight: "600" as const,
   },
   defaultSelectedText: {
     color: DesignTokens.colors.dark.text.primary,

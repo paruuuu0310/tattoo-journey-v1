@@ -1,6 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import CrashlyticsService from "../../services/CrashlyticsService";
+import crashlyticsService from "../../services/CrashlyticsService";
 import { DesignTokens } from "../design-system/TattooDesignTokens";
 
 interface Props {
@@ -56,8 +56,6 @@ export class CrashlyticsErrorBoundary extends Component<Props, State> {
 
   private async reportErrorToCrashlytics(error: Error, errorInfo: ErrorInfo) {
     try {
-      const crashlyticsService = await CrashlyticsService.getInstance();
-
       // 画面情報をログ
       if (this.props.screenName) {
         crashlyticsService.logMessage(
@@ -101,8 +99,6 @@ export class CrashlyticsErrorBoundary extends Component<Props, State> {
   private handleReportIssue = async () => {
     try {
       // ユーザーから追加情報を収集して報告
-      const crashlyticsService = await CrashlyticsService.getInstance();
-
       crashlyticsService.logMessage(
         "User reported issue via error boundary",
         "info",
